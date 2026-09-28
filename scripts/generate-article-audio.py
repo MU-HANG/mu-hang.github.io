@@ -34,16 +34,26 @@ class ArticleBlocks(HTMLParser):
         self.blocks: list[str] = []
         self.current: list[str] | None = None
         self.depth = 0
+        self.had_break = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in {"p", "h2", "h3", "blockquote"} and self.current is None:
             self.current = []
             self.depth = 1
+            self.had_break = False
         elif self.current is not None:
             if tag == "br":
-                self.current.append("。")
+                self.had_break = True
+                if "".join(self.current).strip():
+                    self.current.append("。")
             elif tag not in {"img", "hr", "input", "wbr"}:
                 self.depth += 1
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "br":
+            self.handle_starttag(tag, attrs)
+        else:
+            super().handle_startendtag(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
         if self.current is None:
@@ -51,7 +61,7 @@ class ArticleBlocks(HTMLParser):
         self.depth -= 1
         if self.depth == 0:
             text = re.sub(r"\s+", "", html.unescape("".join(self.current)))
-            if text:
+            if text or self.had_break:
                 self.blocks.append(text)
             self.current = None
 
@@ -136,9 +146,10 @@ def generate(article: dict, model: Kokoro, phonemizer: ZHG2P, voice: str, speed:
     try:
         with temporary.open("wb") as target:
             for index, block in enumerate(blocks):
-                samples = synthesize(block, model, phonemizer, voice, speed)
-                duration += len(samples) / SAMPLE_RATE
-                target.write(encoder.encode(pcm_bytes(samples)))
+                if block:
+                    samples = synthesize(block, model, phonemizer, voice, speed)
+                    duration += len(samples) / SAMPLE_RATE
+                    target.write(encoder.encode(pcm_bytes(samples)))
                 pause = 0.9 if index == 0 else 0.58
                 if index != len(blocks) - 1:
                     target.write(encoder.encode(silence(pause)))
