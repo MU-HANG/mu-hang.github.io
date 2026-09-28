@@ -78,27 +78,18 @@ def load_articles() -> list[dict]:
 
 def chunks(text: str) -> list[str]:
     """Keep natural sentence endings while bounding each TTS request."""
-    sentences = re.findall(r"[^。！？!?；;]+[。！？!?；;]*", text)
-    pieces: list[str] = []
-    for sentence in sentences:
-        if len(sentence) <= MAX_CHARS:
-            pieces.append(sentence)
-            continue
-        for clause in re.findall(r"[^，、：:,]+[，、：:,]*", sentence):
-            while len(clause) > MAX_CHARS:
-                pieces.append(clause[:MAX_CHARS])
-                clause = clause[MAX_CHARS:]
-            if clause:
-                pieces.append(clause)
     result: list[str] = []
-    current = ""
-    for piece in pieces:
-        if current and len(current) + len(piece) > MAX_CHARS:
-            result.append(current)
-            current = ""
-        current += piece
-    if current:
-        result.append(current)
+    rest = text
+    while len(rest) > MAX_CHARS:
+        boundary = max(
+            (index + 1 for index, character in enumerate(rest[:MAX_CHARS])
+             if character in "。！？!?；;，、：:,"),
+            default=MAX_CHARS,
+        )
+        result.append(rest[:boundary])
+        rest = rest[boundary:]
+    if rest:
+        result.append(rest)
     if "".join(result) != text:
         raise ValueError("Text chunking changed article content")
     return result
