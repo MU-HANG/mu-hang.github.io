@@ -1,0 +1,52 @@
+name: Generate gentle narration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/qwen-narration.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build speech engine
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
+          git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
+          make -C "$RUNNER_TEMP/qwen-engine" blas -j2
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" --self-test
+      - name: Restore speech model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/qwen-model
+          key: qwen3-tts-0.6b-customvoice-model-v1
+      - name: Download speech model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: bash "$RUNNER_TEMP/qwen-engine/download_model.sh" --model small --dir "$RUNNER_TEMP/qwen-model"
+      - name: Generate a short reading
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" \
+            -d "$RUNNER_TEMP/qwen-model" \
+            --int8 -j4 -s uncle_fu -l Chinese \
+            --seed 20260929 --max-duration 70 \
+            --text '我们爱上一个人，常常不只是眷恋对方本身，更是眷恋那个被对方接纳、看见、托举之后缓缓舒展的自己。独处孤寂之时，我们期盼有人抚平心底荒芜。' \
+            -o gentle-reading-sample.wav
+          file gentle-reading-sample.wav
+          test "$(stat -c%s gentle-reading-sample.wav)" -gt 100000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gentle-reading-sample
+          path: gentle-reading-sample.wav
+          retention-days: 1
