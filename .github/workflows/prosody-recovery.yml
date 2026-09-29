@@ -1,0 +1,120 @@
+name: Recover and publish expressive narration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/prosody-recovery.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  synthesize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        article: ['08']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build speech engine
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
+          git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
+          make -C "$RUNNER_TEMP/qwen-engine" blas -j2 >/dev/null
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" --self-test >/dev/null
+      - name: Restore expressive speech model
+        id: model-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/qwen-model
+          key: qwen3-tts-1.7b-customvoice-model-v1
+      - name: Verify model and install MP3 encoder
+        shell: bash
+        run: |
+          test '${{ steps.model-cache.outputs.cache-hit }}' = 'true'
+          test "$(stat -c%s "$RUNNER_TEMP/qwen-model/model.safetensors")" -gt 3500000000
+          python3 -m pip install --quiet --break-system-packages 'lameenc==1.8.4'
+      - name: Narrate article ${{ matrix.article }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" \
+            --int8 -j4 --max-request-seconds 180 --serve 8765 --silent >"$RUNNER_TEMP/qwen-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 120); do
+            if curl --silent --fail http://127.0.0.1:8765/v1/health >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then tail -100 "$RUNNER_TEMP/qwen-server.log"; exit 1; fi
+          python3 scripts/generate-article-audio-qwen.py \
+            --server http://127.0.0.1:8765 --output-dir audio/articles \
+            --article '${{ matrix.article }}' --force
+          test "$(stat -c%s "audio/articles/${{ matrix.article }}.mp3")" -gt 200000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recovered-audio-${{ matrix.article }}
+          path: audio/articles/${{ matrix.article }}.mp3
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+  publish:
+    needs: synthesize
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for the original article jobs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          state=''
+          for attempt in $(seq 1 600); do
+            state=$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              'https://api.github.com/repos/MU-HANG/mu-hang.github.io/actions/runs/36549410235' \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+            if [ "$state" = 'completed' ]; then break; fi
+            sleep 30
+          done
+          test "$state" = 'completed'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 36549410235
+          pattern: article-audio-*
+          path: audio/articles
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: recovered-audio-*
+          path: audio/articles
+          merge-multiple: true
+      - name: Verify complete audio set
+        shell: bash
+        run: |
+          set -euo pipefail
+          for id in $(seq -w 1 30); do
+            file="audio/articles/$id.mp3"
+            test "$(stat -c%s "$file")" -gt 200000
+          done
+      - name: Publish narration
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add audio/articles/*.mp3
+          git commit -m 'Refine article narration with natural prosody'
+          git push origin HEAD:main
