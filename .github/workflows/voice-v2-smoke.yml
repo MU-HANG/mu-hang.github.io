@@ -80,27 +80,29 @@ jobs:
           set -euo pipefail
           test '${{ steps.custom-cache.outputs.cache-hit }}' = 'true'
           mkdir -p voice-v2-smoke
-          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
-            --load-voice voice-profile/v2.qvoice --icl-only -l Chinese --seed 202609294 --rate 1.06 \
-            --instruct "A warm, clear Mandarin male storyteller. Speak conversationally, with a small lift of curiosity for the questions and a gentle, intimate landing. Keep the timbre smooth, never raspy or theatrical." \
-            --text "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
-            -o voice-v2-smoke/01-question.wav
-          for attempt in 0 1 2 3 4; do
-            "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
-              --load-voice voice-profile/v2.qvoice --icl-only -l Chinese \
-              --seed "$((202609295 + attempt * 1000000))" --rate 1.00 \
-              --instruct "The same warm, clear Mandarin male storyteller. Let the memory feel quietly sad and personal, with restrained emotion and natural breath. Ease into the last question; do not whisper, rasp, or dramatize." \
-              --text "我们也会失望，会在告别之后反复问自己：是不是当初再努力一点，结局就会不同？可是后来才明白，爱不能只靠一个人苦苦支撑。" \
-              -o voice-v2-smoke/02-memory.wav
-            if [ "$(stat -c%s voice-v2-smoke/02-memory.wav)" -gt 100000 ]; then break; fi
-            if [ "$attempt" -eq 4 ]; then exit 1; fi
-          done
-          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
-            --load-voice voice-profile/v2.qvoice --icl-only -l Chinese --seed 202609296 --rate 1.09 \
-            --instruct "The same warm, clear Mandarin male storyteller. Sound quietly hopeful and reassuring, like sharing something learned after a long journey. Give the final thought a gentle lift, without sounding promotional or exaggerated." \
-            --text "后来我们慢慢懂得，真正好的爱，不是替彼此填满所有空白，而是在各自完整的路上，仍愿意牵着手继续往前走。" \
-            -o voice-v2-smoke/03-hope.wav
-          for file in voice-v2-smoke/*.wav; do test "$(stat -c%s "$file")" -gt 100000; done
+          render() {
+            local base_seed="$1" rate="$2" instruction="$3" passage="$4" output="$5"
+            for attempt in 0 1 2 3 4 5 6 7; do
+              "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
+                --load-voice voice-profile/v2.qvoice --icl-only -l Chinese \
+                -T 0.5 --seed "$((base_seed + attempt * 1000000))" --rate "$rate" \
+                --instruct "$instruction" --text "$passage" -o "$output"
+              if [ "$(stat -c%s "$output")" -gt 250000 ]; then return 0; fi
+            done
+            return 1
+          }
+          render 202609294 1.06 \
+            "A warm, clear Mandarin male storyteller. Speak conversationally, with a small lift of curiosity for the questions and a gentle, intimate landing. Keep the timbre smooth, never raspy or theatrical." \
+            "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
+            voice-v2-smoke/01-question.wav
+          render 202609295 1.00 \
+            "The same warm, clear Mandarin male storyteller. Let the memory feel quietly sad and personal, with restrained emotion and natural breath. Ease into the last question; do not whisper, rasp, or dramatize." \
+            "我们也会失望，会在告别之后反复问自己：是不是当初再努力一点，结局就会不同？可是后来才明白，爱不能只靠一个人苦苦支撑。" \
+            voice-v2-smoke/02-memory.wav
+          render 202609296 1.09 \
+            "The same warm, clear Mandarin male storyteller. Sound quietly hopeful and reassuring, like sharing something learned after a long journey. Give the final thought a gentle lift, without sounding promotional or exaggerated." \
+            "后来我们慢慢懂得，真正好的爱，不是替彼此填满所有空白，而是在各自完整的路上，仍愿意牵着手继续往前走。" \
+            voice-v2-smoke/03-hope.wav
       - uses: actions/upload-artifact@v4
         with:
           name: selected-voice-delivery-smoke
