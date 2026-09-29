@@ -158,7 +158,7 @@ def request_audio(server: str, text: str, seed: int, language: str) -> bytes:
         samples = audio.readframes(audio.getnframes())
     duration = len(samples) / (2 * SAMPLE_RATE)
     hanzi_count = sum("\u3400" <= character <= "\u9fff" for character in text)
-    minimum_duration = max(0.8, 0.12 * hanzi_count, 0.07 * len(text))
+    minimum_duration = max(0.8, 0.12 * hanzi_count, 0.04 * len(text))
     if duration < minimum_duration or duration > max(15, 0.85 * len(text)):
         raise ValueError(f"Implausible {duration:.1f}s reading of {len(text)} characters: {text[:35]!r}")
     pcm = array("h")
