@@ -54,10 +54,12 @@ jobs:
           samples = {
               "question": "爱到底是什么？为什么它让我们如此完整，又如此破碎？我们是否只是借另一个人的目光，才看见了自己？",
               "reflection": "在靠近另一个人之前，我们先学着与自己的孤独相处。爱不是填补缺口，而是温柔地承认彼此都不完美。",
+              "quote": "The capacity to be alone is based on the experience of being alone in the presence of mother.",
           }
           style = "Speak as a warm, gentle Mandarin male narrator. Let each sentence's meaning shape the intonation and emotion naturally. Be intimate and restrained, like telling a story to one person, not performing on stage. Use a natural conversational pace."
           for index, (name, text) in enumerate(samples.items()):
-              payload = json.dumps({"text":text,"speaker":"uncle_fu","language":"Chinese","instruct":style,"rate":1.1,"seed":20260929+index,"temperature":0.5,"top_k":50,"rep_penalty":1.05},ensure_ascii=False).encode()
+              language = "English" if name == "quote" else "Chinese"
+              payload = json.dumps({"text":text,"speaker":"uncle_fu","language":language,"instruct":style,"rate":1.1,"seed":20260929+index,"temperature":0.5,"top_k":50,"rep_penalty":1.05},ensure_ascii=False).encode()
               request = urllib.request.Request("http://127.0.0.1:8765/v1/tts",data=payload,headers={"Content-Type":"application/json"},method="POST")
               start = time.monotonic()
               with urllib.request.urlopen(request,timeout=300) as response: data = response.read()

@@ -36,6 +36,7 @@ STYLE = (
     "restrained, like telling a story to one person, not performing on stage. "
     "Use a natural conversational pace."
 )
+LATIN_RUN = re.compile(r"[A-Za-z][A-Za-z0-9 .'’&:;,!?()\-–—]{10,}")
 
 
 class ArticleBlocks(HTMLParser):
@@ -68,7 +69,8 @@ class ArticleBlocks(HTMLParser):
             return
         self.depth -= 1
         if self.depth == 0:
-            text = re.sub(r"\s+", "", html.unescape("".join(self.current)))
+            text = re.sub(r"\s+", " ", html.unescape("".join(self.current))).strip()
+            text = re.sub(r"(?<=[^\x00-\x7F]) (?=[^\x00-\x7F])", "", text)
             if text:
                 self.blocks.append(text)
             self.current = None
@@ -92,7 +94,7 @@ def chunks(text: str) -> list[str]:
     while len(rest) > MAX_CHARS:
         boundary = max(
             (index + 1 for index, character in enumerate(rest[:MAX_CHARS])
-             if character in "。！？!?；;，、：:,"),
+             if character in "。！？!?；;，、：:,. "),
             default=MAX_CHARS,
         )
         result.append(rest[:boundary])
@@ -104,9 +106,37 @@ def chunks(text: str) -> list[str]:
     return result
 
 
-def request_audio(server: str, text: str, seed: int) -> bytes:
+def spoken_parts(text: str) -> list[tuple[str, str]]:
+    """Keep long English passages readable and pronounce them in English."""
+    result: list[tuple[str, str]] = []
+    position = 0
+    for match in LATIN_RUN.finditer(text):
+        if sum(character.isalpha() for character in match.group()) < 8:
+            continue
+        if match.start() > position:
+            result.extend((part, "Chinese") for part in chunks(text[position:match.start()]))
+        result.extend((part, "English") for part in chunks(match.group()))
+        position = match.end()
+    if position < len(text):
+        result.extend((part, "Chinese") for part in chunks(text[position:]))
+    merged: list[tuple[str, str]] = []
+    for part, language in result:
+        if not any(character.isalnum() for character in part) and merged:
+            preceding, preceding_language = merged[-1]
+            merged[-1] = (preceding + part, preceding_language)
+        else:
+            merged.append((part, language))
+    if len(merged) > 1 and not any(character.isalnum() for character in merged[0][0]):
+        merged[1] = (merged[0][0] + merged[1][0], merged[1][1])
+        merged.pop(0)
+    if "".join(part for part, _ in merged) != text:
+        raise ValueError("Language segmentation changed article content")
+    return merged
+
+
+def request_audio(server: str, text: str, seed: int, language: str) -> bytes:
     payload = json.dumps(
-        {"text": text, "speaker": VOICE, "language": "Chinese", "seed": seed,
+        {"text": text, "speaker": VOICE, "language": language, "seed": seed,
          "instruct": STYLE, "rate": RATE, "temperature": 0.5,
          "top_k": 50, "rep_penalty": 1.05},
         ensure_ascii=False,
@@ -168,15 +198,16 @@ def generate(article: dict, server: str, output_dir: Path, force: bool) -> None:
     if not parser.blocks:
         raise ValueError(f"No readable text for article {article['id']}")
     blocks = [article["title"], *parser.blocks]
-    segments = [(part, block_index) for block_index, block in enumerate(blocks) for part in chunks(block)]
+    segments = [(part, block_index, language) for block_index, block in enumerate(blocks)
+                for part, language in spoken_parts(block)]
     coder = encoder()
     temp = destination.with_suffix(".mp3.part")
     started = time.monotonic()
     duration = 0.0
     try:
         with temp.open("wb") as target:
-            for index, (part, block_index) in enumerate(segments):
-                samples = fade(request_audio(server, part, 20260929 + article["number"] * 1000 + index))
+            for index, (part, block_index, language) in enumerate(segments):
+                samples = fade(request_audio(server, part, 20260929 + article["number"] * 1000 + index, language))
                 target.write(coder.encode(samples))
                 duration += len(samples) / (2 * SAMPLE_RATE)
                 if index < len(segments) - 1:
