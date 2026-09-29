@@ -1,0 +1,73 @@
+name: Test natural narration prosody
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/prosody-smoke.yml
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build speech engine
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
+          git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
+          make -C "$RUNNER_TEMP/qwen-engine" blas -j2 >/dev/null
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" --self-test >/dev/null
+      - name: Restore or download expressive speech model
+        uses: actions/cache@v4
+        id: model-cache
+        with:
+          path: ${{ runner.temp }}/qwen-model
+          key: qwen3-tts-1.7b-customvoice-model-v1
+      - name: Download model when needed
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/qwen-engine/download_model.sh" --model large --dir "$RUNNER_TEMP/qwen-model"
+      - name: Create test narration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(stat -c%s "$RUNNER_TEMP/qwen-model/model.safetensors")" -gt 3500000000
+          free -h
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" \
+            --int8 -j4 --max-request-seconds 180 --serve 8765 --silent >"$RUNNER_TEMP/qwen-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 120); do
+            if curl --silent --fail http://127.0.0.1:8765/v1/health >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then tail -100 "$RUNNER_TEMP/qwen-server.log"; exit 1; fi
+          mkdir -p prosody-test
+          python3 - <<'PY'
+          import io, json, pathlib, time, urllib.request, wave
+          samples = {
+              "question": "爱到底是什么？为什么它让我们如此完整，又如此破碎？我们是否只是借另一个人的目光，才看见了自己？",
+              "reflection": "在靠近另一个人之前，我们先学着与自己的孤独相处。爱不是填补缺口，而是温柔地承认彼此都不完美。",
+          }
+          style = "Speak as a warm, gentle Mandarin male narrator. Let each sentence's meaning shape the intonation and emotion naturally. Be intimate and restrained, like telling a story to one person, not performing on stage. Use a natural conversational pace."
+          for index, (name, text) in enumerate(samples.items()):
+              payload = json.dumps({"text":text,"speaker":"uncle_fu","language":"Chinese","instruct":style,"rate":1.1,"seed":20260929+index,"temperature":0.5,"top_k":50,"rep_penalty":1.05},ensure_ascii=False).encode()
+              request = urllib.request.Request("http://127.0.0.1:8765/v1/tts",data=payload,headers={"Content-Type":"application/json"},method="POST")
+              start = time.monotonic()
+              with urllib.request.urlopen(request,timeout=300) as response: data = response.read()
+              with wave.open(io.BytesIO(data),"rb") as sound: seconds = sound.getnframes()/sound.getframerate()
+              pathlib.Path("prosody-test",name+".wav").write_bytes(data)
+              print(json.dumps({"sample":name,"characters":len(text),"duration_seconds":round(seconds,2),"generation_seconds":round(time.monotonic()-start,2)},ensure_ascii=False),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prosody-test
+          path: prosody-test/*.wav
+          retention-days: 2
+          if-no-files-found: error
