@@ -44,7 +44,9 @@ class ArticleBlocks(HTMLParser):
             self.depth = 1
         elif self.current is not None:
             if tag == "br":
-                self.current.append("。")
+                preceding = "".join(self.current).rstrip()
+                if preceding and preceding[-1] not in "。！？!?；;，、：:":
+                    self.current.append("。")
             elif tag not in {"img", "hr", "input", "wbr"}:
                 self.depth += 1
 
