@@ -1,0 +1,93 @@
+name: Compare emotional narration voices
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/voice-choice.yml
+
+jobs:
+  clear-preset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build speech engine
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
+          git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
+          make -C "$RUNNER_TEMP/qwen-engine" blas -j2 >/dev/null
+      - name: Restore Chinese voice model
+        uses: actions/cache@v4
+        id: model-cache
+        with:
+          path: ${{ runner.temp }}/qwen-model
+          key: qwen3-tts-1.7b-customvoice-model-v1
+      - name: Download model when needed
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/qwen-engine/download_model.sh" --model large --dir "$RUNNER_TEMP/qwen-model"
+      - name: Render clear youthful narrator
+        shell: bash
+        run: |
+          mkdir -p voice-choice
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
+            --speaker dylan -l Chinese --rate 1.08 --seed 202609291 \
+            --instruct "Speak as a clear, warm Mandarin male narrator. Let the question sound curious and the reflection sound reassuring. Keep the voice smooth and natural, without vocal fry, whispering, or theatrical emphasis." \
+            --text "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
+            -o voice-choice/01-clear-youthful.wav
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-choice-clear-youthful
+          path: voice-choice/01-clear-youthful.wav
+          retention-days: 7
+          if-no-files-found: error
+
+  designed-voices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build speech engine
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
+          git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
+          make -C "$RUNNER_TEMP/qwen-engine" blas -j2 >/dev/null
+      - name: Restore voice design model
+        uses: actions/cache@v4
+        id: model-cache
+        with:
+          path: ${{ runner.temp }}/qwen-voice-design-model
+          key: qwen3-tts-1.7b-voice-design-model-v1
+      - name: Download model when needed
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/qwen-engine/download_model.sh" --model voice-design --dir "$RUNNER_TEMP/qwen-voice-design-model"
+      - name: Render smooth emotional narrators
+        shell: bash
+        run: |
+          mkdir -p voice-choice
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-voice-design-model" --int8 -j4 \
+            --voice-design -l Chinese --rate 1.08 --seed 202609292 \
+            --instruct "三十岁左右的普通话青年男声，音色温润清亮、干净顺滑，没有沙哑、颗粒感或气泡音。像情感博主私下讲述自己的体会，亲近自然，按句意轻轻起伏，语速接近日常叙述。" \
+            --text "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
+            -o voice-choice/02-warm-intimate.wav
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-voice-design-model" --int8 -j4 \
+            --voice-design -l Chinese --rate 1.08 --seed 202609293 \
+            --instruct "三十五岁左右的普通话男声，中低音但清澈不沙哑，声线圆润、稳定、有温度。像成熟的情感节目主播缓缓道来，情绪真诚而克制，疑问句有自然上扬，结尾温柔落下；不要广播腔、低语或戏剧化表演。" \
+            --text "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
+            -o voice-choice/03-calm-storyteller.wav
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-choice-designed
+          path: voice-choice/*.wav
+          retention-days: 7
+          if-no-files-found: error
