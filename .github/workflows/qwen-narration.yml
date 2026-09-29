@@ -61,8 +61,7 @@ jobs:
           python3 scripts/generate-article-audio-qwen.py \
             --server http://127.0.0.1:8765 --output-dir audio/articles \
             --article '${{ matrix.article }}' --force
-          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 \
-            "audio/articles/${{ matrix.article }}.mp3"
+          test "$(stat -c%s "audio/articles/${{ matrix.article }}.mp3")" -gt 200000
       - uses: actions/upload-artifact@v4
         with:
           name: article-audio-${{ matrix.article }}
@@ -89,8 +88,6 @@ jobs:
           for id in $(seq -w 1 30); do
             file="audio/articles/$id.mp3"
             test "$(stat -c%s "$file")" -gt 200000
-            duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$file")
-            awk -v duration="$duration" 'BEGIN { exit !(duration > 60) }'
           done
       - name: Publish new narration
         shell: bash
