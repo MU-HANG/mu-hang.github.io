@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - .github/workflows/prosody-narration.yml
+      - scripts/generate-article-audio-qwen.py
+      - lib/articles.json
+      - lib/additional-articles.json
 
 permissions:
   contents: write

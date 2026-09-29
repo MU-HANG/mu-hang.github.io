@@ -157,7 +157,9 @@ def request_audio(server: str, text: str, seed: int, language: str) -> bytes:
             raise ValueError(f"Unexpected WAV format for {text[:20]!r}")
         samples = audio.readframes(audio.getnframes())
     duration = len(samples) / (2 * SAMPLE_RATE)
-    if duration < max(0.8, 0.08 * len(text)) or duration > max(15, 0.85 * len(text)):
+    hanzi_count = sum("\u3400" <= character <= "\u9fff" for character in text)
+    minimum_duration = max(0.8, 0.12 * hanzi_count, 0.07 * len(text))
+    if duration < minimum_duration or duration > max(15, 0.85 * len(text)):
         raise ValueError(f"Implausible {duration:.1f}s reading of {len(text)} characters: {text[:35]!r}")
     pcm = array("h")
     pcm.frombytes(samples)
@@ -207,7 +209,16 @@ def generate(article: dict, server: str, output_dir: Path, force: bool) -> None:
     try:
         with temp.open("wb") as target:
             for index, (part, block_index, language) in enumerate(segments):
-                samples = fade(request_audio(server, part, 20260929 + article["number"] * 1000 + index, language))
+                for attempt in range(3):
+                    try:
+                        seed = 20260929 + article["number"] * 1000 + index + attempt * 1_000_000
+                        samples = fade(request_audio(server, part, seed, language))
+                        break
+                    except (ValueError, RuntimeError, urllib.error.URLError, TimeoutError) as error:
+                        if attempt == 2:
+                            raise
+                        print(f"RETRY {article['id']} segment {index + 1}: {error}", flush=True)
+                        time.sleep(0.5 * (attempt + 1))
                 target.write(coder.encode(samples))
                 duration += len(samples) / (2 * SAMPLE_RATE)
                 if index < len(segments) - 1:
