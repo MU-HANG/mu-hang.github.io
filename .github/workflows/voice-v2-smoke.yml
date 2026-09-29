@@ -1,0 +1,104 @@
+name: Validate selected storytelling voice
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/voice-v2-smoke.yml
+      - .github/voice-reference/v2.wav
+
+jobs:
+  clone-profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build speech engine
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
+          git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
+          make -C "$RUNNER_TEMP/qwen-engine" blas -j2 >/dev/null
+      - name: Restore base model
+        uses: actions/cache@v4
+        id: base-cache
+        with:
+          path: ${{ runner.temp }}/qwen-base-model
+          key: qwen3-tts-1.7b-base-model-v1
+      - name: Download base model when needed
+        if: steps.base-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/qwen-engine/download_model.sh" --model base-large --dir "$RUNNER_TEMP/qwen-base-model"
+      - name: Save reusable selected voice
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p voice-profile
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-base-model" --int8 -j4 \
+            -l Chinese --ref-audio .github/voice-reference/v2.wav \
+            --ref-text "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
+            --voice-name "Warm Storyteller V2" --save-voice voice-profile/v2.qvoice
+          test "$(stat -c%s voice-profile/v2.qvoice)" -gt 100000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-voice-profile
+          path: voice-profile/v2.qvoice
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  compare-delivery:
+    needs: clone-profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-voice-profile
+          path: voice-profile
+      - name: Build speech engine
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+          git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
+          git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
+          make -C "$RUNNER_TEMP/qwen-engine" blas -j2 >/dev/null
+      - name: Restore expressive speech model
+        uses: actions/cache/restore@v4
+        id: custom-cache
+        with:
+          path: ${{ runner.temp }}/qwen-model
+          key: qwen3-tts-1.7b-customvoice-model-v1
+      - name: Render three emotional passages
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ steps.custom-cache.outputs.cache-hit }}' = 'true'
+          mkdir -p voice-v2-smoke
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
+            --load-voice voice-profile/v2.qvoice --icl-only -l Chinese --seed 202609294 --rate 1.06 \
+            --instruct "A warm, clear Mandarin male storyteller. Speak conversationally, with a small lift of curiosity for the questions and a gentle, intimate landing. Keep the timbre smooth, never raspy or theatrical." \
+            --text "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
+            -o voice-v2-smoke/01-question.wav
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
+            --load-voice voice-profile/v2.qvoice --icl-only -l Chinese --seed 202609295 --rate 1.00 \
+            --instruct "The same warm, clear Mandarin male storyteller. Let the memory feel quietly sad and personal, with restrained emotion and natural breath. Ease into the last question; do not whisper, rasp, or dramatize." \
+            --text "我们也会失望，会在告别之后反复问自己：是不是当初再努力一点，结局就会不同？可是后来才明白，爱不能只靠一个人苦苦支撑。" \
+            -o voice-v2-smoke/02-memory.wav
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-model" --int8 -j4 \
+            --load-voice voice-profile/v2.qvoice --icl-only -l Chinese --seed 202609296 --rate 1.09 \
+            --instruct "The same warm, clear Mandarin male storyteller. Sound quietly hopeful and reassuring, like sharing something learned after a long journey. Give the final thought a gentle lift, without sounding promotional or exaggerated." \
+            --text "后来我们慢慢懂得，真正好的爱，不是替彼此填满所有空白，而是在各自完整的路上，仍愿意牵着手继续往前走。" \
+            -o voice-v2-smoke/03-hope.wav
+          for file in voice-v2-smoke/*.wav; do test "$(stat -c%s "$file")" -gt 100000; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-voice-delivery-smoke
+          path: voice-v2-smoke/*.wav
+          retention-days: 7
+          if-no-files-found: error
