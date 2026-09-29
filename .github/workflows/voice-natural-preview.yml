@@ -1,4 +1,4 @@
-name: Test a natural male reading
+name: Test original warm voice with natural narration
 
 on:
   push:
@@ -20,27 +20,28 @@ jobs:
           git clone --quiet https://github.com/gabriele-mastrapasqua/qwen3-tts.git "$RUNNER_TEMP/qwen-engine"
           git -C "$RUNNER_TEMP/qwen-engine" checkout --quiet ef339be58a778b062e1c14382347964552eae007
           make -C "$RUNNER_TEMP/qwen-engine" blas -j2 >/dev/null
-      - name: Restore voice design model
+      - name: Restore base voice model
         uses: actions/cache/restore@v4
         id: model-cache
         with:
-          path: ${{ runner.temp }}/qwen-voice-design-model
-          key: qwen3-tts-1.7b-voice-design-model-v1
-      - name: Generate one unbroken male reading
+          path: ${{ runner.temp }}/qwen-base-model
+          key: qwen3-tts-1.7b-base-model-v1
+      - name: Narrate continuously from selected voice reference
         shell: bash
         run: |
           set -euo pipefail
           test '${{ steps.model-cache.outputs.cache-hit }}' = 'true'
           mkdir -p voice-natural-preview
-          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-voice-design-model" --int8 -j4 \
-            --voice-design -l Chinese --rate 1.06 --seed 202609293 \
-            --instruct "三十五岁左右的成年男性，普通话自然清晰，声音处于温和的中低音区，有真实男声的厚度，声线圆润但不沙哑。像坐在朋友对面讲一段自己的经历，语速接近日常交谈，情绪随句意轻微变化；不要刻意压嗓、播音腔、低语或煽情表演。" \
+          "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-base-model" --int8 -j4 \
+            -l Chinese --rate 1.06 --seed 202609292 \
+            --ref-audio .github/voice-reference/v2.wav \
+            --ref-text "爱到底是什么？为什么它让我们如此完整，又如此破碎？在靠近另一个人之前，我们先学着与自己的孤独相处。" \
             --text "有时候，我们以为爱能填满心里的空缺。可当一个人离开，那些没有说出口的话，真的会慢慢消失吗？后来我才明白，遗憾不必急着忘记；能带着它继续好好生活，也是一种温柔。" \
-            -o voice-natural-preview/continuous-male.wav
-          test "$(stat -c%s voice-natural-preview/continuous-male.wav)" -gt 300000
+            -o voice-natural-preview/selected-v2-base.wav
+          test "$(stat -c%s voice-natural-preview/selected-v2-base.wav)" -gt 300000
       - uses: actions/upload-artifact@v4
         with:
-          name: continuous-natural-male-reading
-          path: voice-natural-preview/continuous-male.wav
+          name: selected-v2-base-reading
+          path: voice-natural-preview/selected-v2-base.wav
           retention-days: 7
           if-no-files-found: error
