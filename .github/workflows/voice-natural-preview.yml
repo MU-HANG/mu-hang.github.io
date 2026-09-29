@@ -1,4 +1,4 @@
-name: Test a continuous natural reading
+name: Test a natural male reading
 
 on:
   push:
@@ -26,21 +26,21 @@ jobs:
         with:
           path: ${{ runner.temp }}/qwen-voice-design-model
           key: qwen3-tts-1.7b-voice-design-model-v1
-      - name: Generate one unbroken passage
+      - name: Generate one unbroken male reading
         shell: bash
         run: |
           set -euo pipefail
           test '${{ steps.model-cache.outputs.cache-hit }}' = 'true'
           mkdir -p voice-natural-preview
           "$RUNNER_TEMP/qwen-engine/qwen_tts" -d "$RUNNER_TEMP/qwen-voice-design-model" --int8 -j4 \
-            --voice-design -l Chinese --rate 1.08 --seed 202609292 \
-            --instruct "三十岁左右的普通话青年男声，音色温润清亮、干净顺滑，没有沙哑、颗粒感或气泡音。像向一位朋友讲述自己的经历，亲近自然，按句意轻轻起伏，语速接近日常叙述；不要播音腔、刻意煽情或夸张停顿。" \
+            --voice-design -l Chinese --rate 1.06 --seed 202609293 \
+            --instruct "三十五岁左右的成年男性，普通话自然清晰，声音处于温和的中低音区，有真实男声的厚度，声线圆润但不沙哑。像坐在朋友对面讲一段自己的经历，语速接近日常交谈，情绪随句意轻微变化；不要刻意压嗓、播音腔、低语或煽情表演。" \
             --text "有时候，我们以为爱能填满心里的空缺。可当一个人离开，那些没有说出口的话，真的会慢慢消失吗？后来我才明白，遗憾不必急着忘记；能带着它继续好好生活，也是一种温柔。" \
-            -o voice-natural-preview/continuous-v2.wav
-          test "$(stat -c%s voice-natural-preview/continuous-v2.wav)" -gt 300000
+            -o voice-natural-preview/continuous-male.wav
+          test "$(stat -c%s voice-natural-preview/continuous-male.wav)" -gt 300000
       - uses: actions/upload-artifact@v4
         with:
-          name: continuous-natural-reading
-          path: voice-natural-preview/continuous-v2.wav
+          name: continuous-natural-male-reading
+          path: voice-natural-preview/continuous-male.wav
           retention-days: 7
           if-no-files-found: error
